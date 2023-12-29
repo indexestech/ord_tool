@@ -1,12 +1,20 @@
+import fs from "fs";
+
 import mempoolJS from "@mempool/mempool.js";
-import bitcoin, { Network, Payment, Psbt, script as bscript, initEccLib } from "bitcoinjs-lib";
+import bitcoin, {
+  Network,
+  Payment,
+  Psbt,
+  TxOutput,
+  script as bscript,
+  initEccLib,
+} from "bitcoinjs-lib";
 import { toXOnly, tweakInternalPubKey } from "bitcoinjs-lib/src/psbt/bip371";
 
 import * as ecc from "tiny-secp256k1";
 initEccLib(ecc);
 
 import ECPairFactory, { ECPairAPI, ECPairInterface } from "ecpair";
-import { MempoolReturn } from "@mempool/mempool.js/lib/interfaces/index";
 import { AddressTxsUtxo } from "@mempool/mempool.js/lib/interfaces/bitcoin/addresses";
 const ECPair = ECPairFactory(ecc);
 
@@ -21,6 +29,63 @@ type InscriptionRequest = {
   contentType: string;
   content: Buffer;
 };
+const log = Date.now() + ".json";
+
+class Log {
+  file: string;
+  constructor() {
+    this.file = Date.now() + ".json";
+  }
+
+  logParams(
+    testnet: boolean,
+    payAddr: string,
+    commitFee: number,
+    revealFee: number,
+    singleRevealTx: boolean,
+    requests: InscriptionRequest[]
+  ) {
+    if (fs.existsSync(this.file)) {
+      // one command must have only log
+      throw new Error("file:" + this.file + "exists");
+    }
+    fs.writeFileSync(
+      this.file,
+      JSON.stringify({
+        param: { testnet, payAddr, commitFee, revealFee, singleRevealTx, requests },
+      })
+    );
+  }
+
+  logRevealTxs(
+    txs: {
+      wif: string;
+      address: string;
+      value: number;
+      vsize: number;
+      feeRate: number;
+      gas: number;
+    }[]
+  ) {
+    if (!fs.existsSync(this.file)) {
+      throw new Error("no initial file");
+    }
+    const data = JSON.parse(fs.readFileSync(this.file, "utf-8"));
+    data.revealTxs = txs;
+    fs.writeFileSync(this.file, JSON.stringify(data));
+  }
+
+  logCommitTx(tx: {
+    total: number;
+    spend: number;
+    charge: number;
+    fee: number;
+    prevOutputs: TxOutput[];
+    outputs: {
+      address: string;
+    };
+  }) {}
+}
 
 async function inscribe(
   testnet: boolean,
@@ -30,6 +95,16 @@ async function inscribe(
   singleRevealTx: boolean,
   requests: InscriptionRequest[]
 ) {
+  const params = {
+    testnet,
+    payAddr,
+    commitFee,
+    revealFee,
+    singleRevealTx,
+    requests,
+  };
+
+  JSON.stringify(params, null, 2);
   const client = mempoolJS({
     hostname: "mempool.space",
     network: testnet ? "testnet" : "mainnet",
@@ -75,6 +150,86 @@ type InscriptionTx = {
   payment: Payment;
   value: number;
 };
+
+type OrdData = {
+  contentType: string;
+  content: Buffer;
+};
+
+/**
+ * @param pub Buffer pubkey of reveal
+ * @param data OrdData data to be inscribed
+ * @returns Buffer taproot script
+ *
+ */
+export function buildOrdScript(pub: Buffer, data: OrdData): Buffer {
+  const chuncks = [
+    pub,
+    bscript.OPS.OP_CHECKSIG,
+    bscript.OPS.OP_FALSE,
+    bscript.OPS.OP_IF,
+    Buffer.from("ord", "utf8"),
+    1,
+    1,
+    Buffer.from(data.contentType, "utf8"),
+    0,
+  ];
+
+  const maxChunkSize = 520;
+  for (let i = 0; i < data.content.length; i += maxChunkSize) {
+    let end = i + maxChunkSize;
+
+    if (end > data.content.length) {
+      end = data.content.length;
+    }
+
+    chuncks.push(data.content.subarray(i, end));
+  }
+
+  chuncks.push(bscript.OPS.OP_ENDIF);
+  return bscript.compile(chuncks);
+}
+
+type OrdRequest = {
+  data: OrdData;
+  dst: string;
+};
+
+// minimal value
+const DUST = 330;
+
+/**
+ * @param network Network bitcoin network, mainnet, testnet
+ * @param data OrdData data to be inscribed
+ * @param dst string address of inscription sending
+ * @param feeRate number fee rate for reveal tx
+ */
+export function createRevealTx(
+  network: bitcoin.networks.Network,
+  data: OrdData,
+  dst: string,
+  feeRate: number
+): { payment: Payment; internalKeypair: ECPairInterface } {
+  // prepare internal keypair for inscription
+  const internalKeypair = ECPair.makeRandom({ network });
+  const internalPub = toXOnly(internalKeypair.publicKey);
+
+  // build p2tr payment
+  const scriptTree = {
+    output: buildOrdScript(internalPub, data),
+  };
+  const payment = bitcoin.payments.p2tr({ pubkey: internalPub, scriptTree, network });
+
+  // estimate fee
+
+  const estTx = new bitcoin.Transaction();
+
+  // make fake input
+  estTx.addInput(Buffer.alloc(32), 0);
+  estTx.addOutput(Buffer.alloc(32), DUST);
+  estTx.
+}
+
 function createInscriptioTx(
   network: bitcoin.networks.Network,
   contentType: string,
@@ -83,6 +238,7 @@ function createInscriptioTx(
   const internalKey = ECPair.makeRandom({
     network,
   });
+  console.log("☞☞☞☞☞☞internal key network", network, "WIF:", internalKey.toWIF());
   const pub = toXOnly(internalKey.publicKey);
   const tweakSigner = internalKey.tweak(
     bitcoin.crypto.taggedHash("TapTweak", toXOnly(internalKey.publicKey))
@@ -93,10 +249,10 @@ function createInscriptioTx(
     bscript.OPS.OP_FALSE,
     bscript.OPS.OP_IF,
     Buffer.from("ord", "utf8"),
-    bscript.OPS.OP_1,
-    bscript.OPS.OP_1,
+    1,
+    1,
     Buffer.from(contentType, "utf8"),
-    bscript.OPS.OP_0,
+    0,
   ];
 
   const maxChunkSize = 520;
@@ -156,9 +312,39 @@ async function createCommitTx(
   utxos: AddressTxsUtxo[],
   inscriptionTxs: InscriptionTx[]
 ) {
+  const {
+    psbt: withoutFeePsbt,
+    total,
+    spend,
+  } = createPSBT(true, network, payAddr, signer, 0, utxos, inscriptionTxs);
+
+  const tx0 = withoutFeePsbt.extractTransaction();
+  const vsize = tx0.virtualSize();
+
+  const fee = vsize * feeRate;
+  const chargeFee = total - spend - fee;
+
+  if (chargeFee < 0) {
+    throw new Error("INSUFFICE_BALANCE_FOR_GAS");
+  }
+
+  const { psbt } = createPSBT(false, network, payAddr, signer, chargeFee, utxos, inscriptionTxs);
+  console.log("🚩🚩🚩🚩blance", total, "spend", spend, "fee", fee);
+  return psbt.extractTransaction();
+}
+
+function createPSBT(
+  estimated: boolean,
+  network: bitcoin.networks.Network,
+  payAddr: string,
+  signer: ECPairInterface,
+  chargeFee: number,
+  utxos: AddressTxsUtxo[],
+  inscriptionTxs: InscriptionTx[]
+): { psbt: Psbt; total: number; spend: number } {
   const script = bitcoin.address.toOutputScript(payAddr, network);
   const psbt = new Psbt({ network });
-  //psbt.setMaximumFeeRate(500);
+  // psbt.setMaximumFeeRate(500);
   let total = 0;
   for (let i = 0; i < utxos.length; i++) {
     const unspend = utxos[i];
@@ -176,43 +362,18 @@ async function createCommitTx(
     psbt.addOutput({ address: ins.payment.address!, value: ins.value });
     spend += ins.value;
   }
-  psbt.addOutput({ address: payAddr, value: 0 });
 
-  const estimatedSize = psbt.data.inputs.reduce(
-    (acc, input) => {
-      return acc + input.witnessUtxo!.script.length + 41; // 41 is the approximate size of other input fields
-    },
-    psbt.txOutputs.reduce((acc, output) => acc + 8 + output.script.length, 10)
-  );
-
-  const estimatedFee = Math.ceil(estimatedSize * feeRate);
-
-  const chargeIndex = psbt.txOutputs.length - 1;
-
-  psbt.txOutputs[chargeIndex].value += total - spend - estimatedFee;
-  console.log(
-    "total",
-    total,
-    "spend",
-    spend,
-    "estimatedFee",
-    estimatedFee,
-    "return",
-    psbt.txOutputs[chargeIndex].value
-  );
-  if (psbt.txOutputs[chargeIndex].value <= 0) {
-    throw new Error("INVALID_BALANCE_TO_GAS");
+  if (estimated) {
+    psbt.addOutput({ address: payAddr, value: 0 });
+  } else {
+    if (chargeFee > 330) {
+      psbt.addOutput({ address: payAddr, value: chargeFee });
+    }
   }
 
   psbt.signAllInputs(signer);
   psbt.finalizeAllInputs();
-  const vFeeRate = psbt.getFeeRate();
-  const vFee = psbt.getFee();
-  const tx = psbt.extractTransaction();
-  const vSize = tx.virtualSize();
-
-  console.log("estSize:", estimatedSize, "vsize:", vSize, vFeeRate, vFee);
-  return tx;
+  return { psbt, total, spend };
 }
 
 await inscribe(true, "tb1qp6zk2htw5scqpw7mf3nmhhkmrqdtm0z6edt5py", 50, 200, true, [
