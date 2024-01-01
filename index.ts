@@ -10,6 +10,7 @@ import { Taptree } from "bitcoinjs-lib/src/types";
 import ECPairFactory, { ECPairInterface } from "ecpair";
 const ECPair = ECPairFactory(ecc);
 
+// Validator functions for ECDSA and Schnorr signatures
 export const validateEcdsaSignature = (
   pubkey: Buffer,
   messageHash: Buffer,
@@ -25,6 +26,7 @@ export const validateSchnorrSignature = (
 // Minimal transaction value to avoid MIN_TX_VALUE limit
 const MIN_TX_VALUE = 330;
 
+// Type definitions for inscription configuration and requests
 export type InscriptionConfig = {
   senderAddress: string;
   network: bitcoin.networks.Network;
@@ -49,6 +51,7 @@ export type RevealTransaction = {
   };
 };
 
+// Type definitions for Mempool api
 type Utxo = {
   txid: string;
   vout: number;
@@ -131,6 +134,17 @@ export function buildOrdScript(publicKey: Buffer, request: InscriptionRequest): 
   return bscript.compile(scriptChunks);
 }
 
+/**
+ * Constructs an empty reveal transaction for an Ordinal inscription.
+ * This function prepares a PSBT (Partially Signed Bitcoin Transaction) for the reveal step
+ * of an Ordinals transaction process.
+ *
+ * @param network The Bitcoin network (mainnet or testnet).
+ * @param keypair The ECPairInterface object representing the key pair.
+ * @param request The InscriptionRequest object containing details for the inscription.
+ * @param feeRate The fee rate in satoshis per byte for the transaction.
+ * @returns An object representing the reveal transaction details.
+ */
 export function buildEmptyRevealTransaction(
   network: bitcoin.networks.Network,
   keypair: ECPairInterface,
@@ -188,6 +202,15 @@ export function buildEmptyRevealTransaction(
   };
 }
 
+/**
+ * Builds a Commit PSBT (Partially Signed Bitcoin Transaction) for Ordinals inscriptions.
+ * This function creates a new transaction that commits multiple inscription requests.
+ *
+ * @param config The InscriptionConfig object containing transaction configurations.
+ * @param utxos An array of UTXOs (Unspent Transaction Outputs) to be used for funding the transaction.
+ * @param revealTransactionIns An array of RevealTransaction objects for each inscription.
+ * @returns A Psbt object representing the commit transaction.
+ */
 export function buildCommitPbst(
   config: InscriptionConfig,
   utxos: Utxo[],
@@ -350,6 +373,17 @@ export function makeRevealTransactions(
   return txs;
 }
 
+/**
+ * Estimates the change that should be returned to the sender in a transaction.
+ *
+ * @param config The InscriptionConfig object containing transaction configurations.
+ * @param numInputs The number of input UTXOs being used in the transaction.
+ * @param numOutputs The number of outputs in the transaction (excluding the change output).
+ * @param total The total value of all input UTXOs in satoshis.
+ * @param spend The total value being spent in satoshis (sum of all outputs including fees but excluding change).
+ * @returns The amount of change in satoshis to be returned to the sender.
+ * @throws Error if address types are unsupported or if balance is insufficient.
+ */
 export async function makeCommitTransaction(
   config: InscriptionConfig
 ): Promise<{ internalKeyWIF: string; tx: string; reveals: RevealTransaction[] }> {
@@ -379,6 +413,17 @@ export async function makeCommitTransaction(
   };
 }
 
+/**
+ * Builds a payment structure for a taproot (P2TR) transaction specific to Ordinals inscriptions.
+ *
+ * This function constructs a payment object used to define the output of a taproot transaction,
+ * which includes the taproot script and other necessary components for Ordinals inscription.
+ *
+ * @param network The Bitcoin network (mainnet or testnet).
+ * @param publicKey The public key associated with the transaction.
+ * @param request The InscriptionRequest object containing details for the inscription.
+ * @returns A Payment object representing the taproot transaction output.
+ */
 function buildInscriptionPayment(
   network: bitcoin.networks.Network,
   publicKey: Buffer,
