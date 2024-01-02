@@ -33,6 +33,8 @@ async function deployBRC20() {
   const tool = new OrdTool(config);
   console.log("internal keypair WIF", tool.internalKeypair.toWIF());
   let unsignCommitPsbt = await tool.makeUnsignedCommitPsbt();
+  // adding a private key in WIF (Wallet Import Format) to a .env file
+  // WIF=your_private_key_in_WIF_format
   const wif = process.env.WIF;
 
   if (!wif) {

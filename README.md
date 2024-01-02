@@ -39,6 +39,11 @@ const config: InscriptionConfig = {
 
 const tool = new OrdTool(config);
 
+// adding a private key in WIF (Wallet Import Format) to a .env file
+// WIF=your_private_key_in_WIF_format
+const wif = process.env.WIF;
+const signer = makeKeypairFromWIF(wif, network);
+
 // Generate and sign the commit transaction
 let unsignCommitPsbt = await tool.makeUnsignedCommitPsbt();
 // Sign the transaction using your private key or wallet (ensure security practices)
