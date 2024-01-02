@@ -96,6 +96,22 @@ type TransactionStatus = {
   block_time: number;
 };
 
+export function makeKeypairFromWIF(
+  wif: string,
+  network: bitcoin.networks.Network
+): ECPairInterface {
+  return ECPair.fromWIF(wif, network);
+}
+
+export function getSignatureValidator(address: string): any {
+  const addressType = getAddressType(address);
+
+  if (addressType === "p2tr") {
+    return validateSchnorrSignature;
+  }
+  return validateEcdsaSignature;
+}
+
 /**
  * Constructs a taproot script for Ordinals transactions.
  *
@@ -561,6 +577,7 @@ export class OrdTool {
 
     const publicKey = toXOnly(this.internalKeypair.publicKey);
     const vouts = tx.vout;
+    const txIds = [];
     for (let i = 0; i < this.config.inscriptionRequests.length; i++) {
       const request = this.config.inscriptionRequests[i];
       const inscriptionScript = buildOrdScript(publicKey, request);
@@ -620,7 +637,9 @@ export class OrdTool {
 
       const txId = await this.client.postTx(psbt.extractTransaction().toHex());
       console.log("reveal transaction id:", txId);
+      txIds.push(txId);
     }
+    return txIds;
   }
 
   async waitUntilTransactionConfirm(txId: string): Promise<void> {
