@@ -1,4 +1,4 @@
-import bitcoin, { Payment, Psbt, Transaction, script as bscript, initEccLib } from "bitcoinjs-lib";
+import bitcoin, { Payment, Psbt, script as bscript, initEccLib } from "bitcoinjs-lib";
 import { toXOnly } from "bitcoinjs-lib/src/psbt/bip371";
 
 import { LEAF_VERSION_TAPSCRIPT } from "bitcoinjs-lib/src/payments/bip341";
@@ -321,112 +321,6 @@ export function estimateChange(
     throw new Error("insufficient balance");
   }
   return change > MIN_TX_VALUE ? change : 0;
-}
-
-export function makeRevealTransactions(
-  config: InscriptionConfig,
-  keypair: ECPairInterface,
-  reveals: RevealTransaction[]
-): Transaction[] {
-  const publicKey = toXOnly(keypair.publicKey);
-  const txs = [];
-  for (let i = 0; i < config.inscriptionRequests.length; i++) {
-    const request = config.inscriptionRequests[i];
-    const inscriptionScript = buildOrdScript(publicKey, request);
-    // build p2tr payment
-    const scriptTree: Taptree = [
-      {
-        output: inscriptionScript,
-      },
-      {
-        output: inscriptionScript,
-      },
-    ];
-
-    const redeem = {
-      output: inscriptionScript,
-      redeemVersion: LEAF_VERSION_TAPSCRIPT,
-    };
-    const payment = bitcoin.payments.p2tr({
-      internalPubkey: publicKey,
-      scriptTree,
-      redeem,
-      network: config.network,
-    });
-
-    const reveal = reveals[i];
-
-    if (reveal.inscriptionAddress !== payment.address) {
-      throw new Error("address mismatch");
-    }
-    const psbt = new Psbt({ network: config.network });
-    psbt.addInput({
-      hash: reveal.output.hash,
-      index: i,
-      witnessUtxo: {
-        value: reveal.transactionValue,
-        script: bitcoin.address.toOutputScript(reveal.inscriptionAddress, config.network),
-      },
-    });
-    psbt.updateInput(0, {
-      tapLeafScript: [
-        {
-          leafVersion: redeem.redeemVersion,
-          script: redeem.output,
-          controlBlock: payment.witness![payment.witness!.length - 1],
-        },
-      ],
-    });
-    psbt.addOutput({
-      address: request.recipientAddress,
-      value: MIN_TX_VALUE,
-    });
-
-    psbt.signInput(0, keypair);
-    psbt.finalizeAllInputs();
-    txs.push(psbt.extractTransaction());
-  }
-  return txs;
-}
-
-/**
- * Estimates the change that should be returned to the sender in a transaction.
- *
- * @param config The InscriptionConfig object containing transaction configurations.
- * @param numInputs The number of input UTXOs being used in the transaction.
- * @param numOutputs The number of outputs in the transaction (excluding the change output).
- * @param total The total value of all input UTXOs in satoshis.
- * @param spend The total value being spent in satoshis (sum of all outputs including fees but excluding change).
- * @returns The amount of change in satoshis to be returned to the sender.
- * @throws Error if address types are unsupported or if balance is insufficient.
- */
-export async function makeCommitTransaction(
-  config: InscriptionConfig
-): Promise<{ internalKeyWIF: string; tx: string; reveals: RevealTransaction[] }> {
-  const client = new MempoolClient(config.network);
-  const outputs = await client.getUtxo(config.senderAddress);
-
-  const keypair = ECPair.makeRandom({ network: config.network });
-  const reveals: RevealTransaction[] = [];
-  for (let request of config.inscriptionRequests) {
-    const reveal = buildEmptyRevealTransaction(config.network, keypair, request, config.feeRate);
-    reveals.push(reveal);
-  }
-  const commitPbst = buildCommitPbst(config, outputs, reveals);
-  let validated = commitPbst
-    .signAllInputs(keypair)
-    .validateSignaturesOfAllInputs(validateSchnorrSignature);
-
-  if (!validated) {
-    throw new Error("invalid psbt");
-  }
-  commitPbst.finalizeAllInputs();
-
-  return {
-    internalKeyWIF: keypair.toWIF(),
-    tx: commitPbst.extractTransaction().toHex(),
-    reveals: reveals,
-  };
 }
 
 /**
