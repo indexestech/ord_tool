@@ -19,6 +19,12 @@ This will install bitcoinjs-lib, tiny-secp256k1, and other required libraries.
 
 ## Usage
 
+### How to run
+
+```bash
+bun run {your_script}.ts
+```
+
 ### Workflow
 
 - **Create a Commit Transaction**: Generate a transaction that commits to the inscription.
